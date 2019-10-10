@@ -1,0 +1,13 @@
+#debug = true
+
+logLevel = "DEBUG"
+defaultEntryPoints = ["http"]
+
+[entryPoints]
+  [entryPoints.http]
+  address = ":80"
+
+[docker]
+endpoint = "unix:///var/run/docker.sock"
+domain = "wako057.net"
+exposedByDefault = false
