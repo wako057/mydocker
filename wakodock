@@ -112,22 +112,36 @@ deps () {
     log debug "Building dependancy list for $app"
 
     case $app in
-        varnish)
-            repository="varnish"
-        ;;
-        jenkins)
-          repository="git@github.com:wako057/jenkins.git"
-        ;;
-        cerebro)
-            repository="git@github.com:wako057/cerebro.git"
-        ;;
-        sonar)
-            repository="git@github.com:wako057/sonar.git"
-        ;;
-        *)
-            log error "Dependancy resolution was asked for app $app but this app doesn't exists in the current configuration"
-            exit
-        ;;
+      nexus)
+        repository="git@github.com:wako057/nexus.git"
+      ;;
+      marvel-api)
+        repository="git@github.com:wako057/marvel-api.git"
+      ;;
+      marvel-front)
+        deps marvel-api
+        repository="git@github.com:wako057/marvel-front.git"
+      ;;
+      marvel)
+        deps marvel-api
+        deps marvel-front
+      ;;
+      jenkins)
+        repository="git@github.com:wako057/jenkins.git"
+      ;;
+      cerebro)
+        repository="git@github.com:wako057/cerebro.git"
+      ;;
+      sonar)
+        repository="git@github.com:wako057/sonar.git"
+      ;;
+      varnish)
+        repository="varnish"
+      ;;
+      *)
+          log error "Dependancy resolution was asked for app $app but this app doesn't exists in the current configuration"
+          exit
+      ;;
     esac
     # Extract directory from git repository name
     directory=$(echo $repository | cut -d/ -f2 | sed 's/.git//g')
