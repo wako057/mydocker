@@ -115,6 +115,10 @@ deps () {
       nexus)
         repository="git@github.com:wako057/nexus.git"
       ;;
+      jenkins)
+		deps nexus
+        repository="git@github.com:wako057/jenkins.git"
+      ;;
       marvel-api)
         repository="git@github.com:wako057/marvel-api.git"
       ;;
@@ -126,9 +130,7 @@ deps () {
         deps marvel-api
         deps marvel-front
       ;;
-      jenkins)
-        repository="git@github.com:wako057/jenkins.git"
-      ;;
+
       cerebro)
         repository="git@github.com:wako057/cerebro.git"
       ;;
@@ -182,7 +184,6 @@ NEEDED_HOSTS=""
 NEEDED_COMPOSE_FILES=""
 LAST_LOG_TIME=$(date "+%s%N" |cut -b1-13)
 CACHE_DOCKER_CONFIG=""
-AWS_USERNAME="${AWS_USERNAME:-}"
 LINUX=false
 OSX=false
 RED="\e[31m"
