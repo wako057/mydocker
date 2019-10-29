@@ -130,7 +130,6 @@ deps () {
         deps marvel-api
         deps marvel-front
       ;;
-
       cerebro)
         repository="git@github.com:wako057/cerebro.git"
       ;;
