@@ -116,7 +116,7 @@ deps () {
         repository="git@github.com:wako057/nexus.git"
       ;;
       jenkins)
-		deps nexus
+#		deps nexus
         repository="git@github.com:wako057/jenkins.git"
       ;;
       marvel-api)
