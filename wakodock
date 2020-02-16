@@ -254,6 +254,7 @@ else
     # Expose UID and GID
     export USER_UID=$(id -u)
     export USER_GID=$(id -g)
+    export DOCKER_GID=$(getent group docker| cut -d: -f3)
 
     if ! echo $2 |grep -E '^(scale|run|bundle|start|create|pull|push|up)$' > /dev/null; then
         SKIP_CHECKS="1"
