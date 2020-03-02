@@ -2,6 +2,7 @@ version: '3.7'
 
 services:
   traefik:
+    container_name: traefik-wakodock
     image: traefik:1.7.16-alpine
     command: --web --docker
     ports:
