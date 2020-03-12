@@ -112,6 +112,9 @@ deps () {
     log debug "Building dependancy list for $app"
 
     case $app in
+      rundeck)
+        repository="git@github.com:wako057/rundeck.git"
+      ;;
       nexus)
         repository="git@github.com:wako057/nexus.git"
       ;;
