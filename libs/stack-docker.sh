@@ -11,12 +11,16 @@ help() {
   echo "Wrapper to docker-compose"
 }
 
-get_docker_config() {
-  # Cache docker config for later use
-  if [ -z "$CACHE_DOCKER_CONFIG" ]; then
-    CACHE_DOCKER_CONFIG="$($HERE/venv/bin/docker-compose $files config)"
-  fi
-  echo "$CACHE_DOCKER_CONFIG"
+get_docker_config () {
+    # Cache docker config for later use
+    if [ -z "$CACHE_DOCKER_CONFIG" ]; then
+        log debug "Docker config cache is empty, generating it"
+        if ! CACHE_DOCKER_CONFIG="$($DOCKER_COMPOSE_BIN "${DOCKER_COMPOSE_FLAGS[@]}" config)"; then
+            log error "Error while parsing docker-compose configuration"
+            exit 1
+        fi
+    fi
+    echo "$CACHE_DOCKER_CONFIG"
 }
 
 find_traefik_hosts() {
@@ -25,17 +29,18 @@ find_traefik_hosts() {
   get_docker_config | $HERE/venv/bin/python3 -c 'import yaml,os; print("\n".join([v["labels"]["traefik.frontend.rule"].split(";")[0] for v in yaml.load(os.sys.stdin)["services"].values() if "labels" in v and "traefik.frontend.rule" in v["labels"]]))' | grep -E '^Host:' | cut -d: -f2 | tr -d '[:blank:]' | sed 's/,/ /g'
 }
 
-get_app_dir_from_repo() {
-  # Output the directory name from the repo name
-  # :param: git clone address or directory
 
-  if echo $1 | grep -sE '\.git$' >/dev/null; then
-    app_dir=$(echo $1 | rev | cut -d/ -f1 | rev | sed -E 's/\.git$//g')
-  else
-    app_dir=$1
-  fi
+get_app_dir_from_repo () {
+    # Output the directory name from the repo name
+    # :param: git clone address or directory
 
-  echo $HERE/apps/$app_dir
+    if echo "$1" |grep -qE '\.git$' > /dev/null; then
+        app_dir=$(echo "$1" | rev | cut -d/ -f1 |rev |sed -E 's/\.git$//g')
+    else
+        app_dir="$1"
+    fi
+
+    echo "$HERE/apps/$app_dir"
 }
 
 checkAndCreateVirtualEnv() {
@@ -64,4 +69,12 @@ checkAndInstallPythonDependancies() {
   if ! [ -z "$diff" ]; then
     $HERE/venv/bin/pip3 install -r $HERE/requirements.txt
   fi
+}
+
+do_git () {
+    # Exec git command
+    # :param: parameters
+
+    local git_parameters=( "$@" )
+    git "${git_parameters[@]}" 3>&1 1>&2 2>&3 3>&- | sed -e 's/^/'"$(echo -e "$RED")"'/g' | sed -e 's/$/'"$(echo -e "$EOC")"'/g'
 }

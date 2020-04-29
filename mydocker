@@ -1,0 +1,381 @@
+#!/bin/bash
+
+#################
+# Configuration
+#################
+export DOMAIN="wako057.net"
+# export DOMAIN_FRONT="dev-indb.io"
+# Set to 1 to skip autoclone question
+AUTO_CLONE="${AUTO_CLONE:0}"
+# Set to 1 to ignore hosts check
+IGNORE_HOSTS="${IGNORE_HOSTS:0}"
+# Gitignore patterns for files to keep when using the clean command
+IDE_FILES=('.idea' '*.swp' '*.swo' '.vscode')
+# Trace
+if [ "$DC_TRACE" = 1 ]; then
+    set -x
+fi
+
+# Exit on error
+set -e
+
+# Determine directory for current script
+HERE="$( cd "$( dirname "$0" )" >/dev/null && pwd )"
+
+
+#####################
+# Low level functions
+#####################
+source "${HERE}/libs/base.sh"
+source "${HERE}/libs/host.sh"
+source "${HERE}/libs/stack-docker.sh"
+
+log debug "Script is in $HERE, executing commands for there"
+
+
+deps () {
+    # Determine dependancy list for a project
+    # :param: project name
+
+    app="$1"
+    repositories=""
+    directories=""
+    compose_file=""
+
+    log debug "Building dependancy list for $app"
+
+    case $app in
+      rundeck)
+        repository="git@github.com:wako057/rundeck.git"
+      ;;
+      nexus)
+        repository="git@github.com:wako057/nexus.git"
+      ;;
+      jenkins)
+		    deps nexus
+        repository="git@github.com:wako057/jenkins.git"
+      ;;
+      marvel-api)
+        repository="git@github.com:wako057/marvel-api.git"
+      ;;
+      marvel-front)
+        deps marvel-api
+        repository="git@github.com:wako057/marvel-front.git"
+      ;;
+      marvel)
+        deps marvel-api
+        deps marvel-front
+      ;;
+      cerebro)
+        repository="git@github.com:wako057/cerebro.git"
+      ;;
+      sonar)
+        repository="git@github.com:wako057/sonar.git"
+      ;;
+      varnish)
+        repository="varnish"
+      ;;
+      *)
+          log error "Dependancy resolution was asked for app $app but this app doesn't exists in the current configuration"
+          exit
+      ;;
+    esac
+    # Extract directory from git repository name
+    directory=$(echo $repository | cut -d/ -f2 | sed 's/.git//g')
+    diacritic_directory=$(echo -n "$directory" | tr '[:lower:]' '[:upper:]'| tr -c '[:alnum:]' _)
+    export "${diacritic_directory}_PATH=$HERE/apps/$directory/"
+    log debug "Exporting ${diacritic_directory}_PATH variable"
+
+    # Build compose file path
+    compose_file="$HERE/apps/$directory/docker-compose.yml"
+
+    # Add NEEDED_REPOSITORIES and NEEDED_COMPOSE_FILES
+    if ! in_array "$repository" "${NEEDED_REPOSITORIES[@]}"; then
+        log debug "Adding repository $repository"
+        NEEDED_REPOSITORIES+=("$repository")
+    else
+        log debug "Skipping repository $repository (already in list)"
+    fi
+
+    if ! in_array "$compose_file" "${NEEDED_COMPOSE_FILES[@]}"; then
+        log debug "Adding compose file $compose_file"
+        NEEDED_COMPOSE_FILES+=("$compose_file")
+    else
+        log debug "Skipping compose file $compose_file (already in list)"
+    fi
+
+    # Add OSx override if present
+    compose_file_osx="$HERE/apps/$directory/docker-compose.macosx.yml"
+    if $OSX && test -f "$compose_file_osx"; then
+        log debug "Adding compose file $compose_file_osx"
+        NEEDED_COMPOSE_FILES+=("$compose_file_osx")
+    fi
+}
+
+# Initialization
+#################
+# Globals
+NEEDED_REPOSITORIES=()
+NEEDED_COMPOSE_FILES=("$HERE/docker-compose.yml")
+LAST_LOG_TIME=$(date "+%s%N" |cut -b1-13)
+CACHE_DOCKER_CONFIG=""
+LINUX=false
+OSX=false
+SKIP_CHECKS=${SKIP_CHECKS:-"0"}
+USE_DEFAULTS_ANSWERS=${USE_DEFAULTS_ANSWERS:-"0"}
+PYTHON_BIN="$HERE/venv/bin/python3"
+DOCKER_COMPOSE_BIN="$HERE/venv/bin/docker-compose"
+PIP_BIN="$HERE/venv/bin/pip3"
+DOCKER_COMPOSE_CACHE_CONFIG="$HERE/.docker-compose.tmp"
+
+
+log debug "Script is in $HERE, executing commands for there"
+
+# Fill system-dependant vars
+case $(uname -s) in
+    Darwin)
+        OSX=true
+    ;;
+    Linux)
+        LINUX=true
+    ;;
+esac
+
+###########
+# Main
+###########
+# Check python
+log debug "Checking python"
+if ! command -v python3 2>/dev/null 1>/dev/null; then
+    log error "You must install python3"
+    exit 8
+fi
+
+# Create virtualenv if it doesn't exists
+log debug "Checking virtualenv"
+checkAndCreateVirtualEnv
+
+# Check python modules
+log debug "Checking python modules"
+checkAndInstallPythonDependancies
+
+
+# Check that a project name was provided
+if [ -z "$1" ]; then
+    help
+    log error "You haven't provided a project name"
+    exit 3
+
+elif [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    help
+    exit
+fi
+
+# Expose UID and GID
+export USER_UID=$(getCurrentUserUid)
+export USER_GID=$(getCurrentUserGid)
+export DOCKER_GID=$(getGidByGroup docker)
+
+if ! echo "$2" |grep -E '^(scale|run|bundle|start|create|pull|push|up|build)$' > /dev/null; then
+    SKIP_CHECKS="1"
+fi
+
+# Determine dependancies
+for project in ${1/,/ }; do
+    deps "$project";
+done
+
+# Check that application is cloned in "apps" directory
+missing_repos=""
+for repo in "${NEEDED_REPOSITORIES[@]}"; do
+    app_dir=$(get_app_dir_from_repo "$repo")
+
+    log debug "Checking app directory $app_dir"
+    if ! [ -d "$app_dir" ]; then
+        log error "Directory $app_dir is not present"
+        missing_repos="$missing_repos $repo"
+    fi
+done
+
+if [ -n "$missing_repos" ]; then
+    if [ "$AUTO_CLONE" = "1" ]; then
+        answer=y
+    elif [[ -t 0 ]]; then
+        log debug "Shell is running in interactive mode. Asking for auto clone"
+        answer=$(ask "Do you want do get them automatically ? (Y/n) : " y n)
+    else
+        log debug "Shell is NOT running in interactive mode."
+        answer="n"
+    fi
+
+    if [ "$answer" = "y" ]; then
+        log debug "User asked for automatic clone"
+
+        main_branches=""
+        # First loop for clones
+        for repo in $missing_repos; do
+            app_dir=$(get_app_dir_from_repo "$repo")
+            log debug "Cloning $repo to $app_dir"
+            main_branch=$(LANG=C git remote show origin | grep "HEAD branch" | cut -d: -f2 | cut -c2-)
+            git clone --origin origin "$repo" "$app_dir"
+            cd "$app_dir"
+            main_branch=$(LANG=C git remote show origin | grep "HEAD branch" | cut -d: -f2 | cut -c2-)
+
+            if [ -z "$main_branch" ]; then
+                log error "Unable to determine main branch for repository $repo"
+                exit 10
+            fi
+
+            log debug "Main branch for $repo is $main_branch"
+            if [ -n "$main_branches" ]; then
+                main_branches="$main_branches "
+            fi
+            main_branches="$main_branches$repo+$main_branch+$app_dir"
+        done
+        # Second loop for versions
+        for tuple in $main_branches; do
+            repo=$(echo "$tuple" |cut -d+ -f1)
+            main_branch=$(echo "$tuple" |cut -d+ -f2)
+            app_dir=$(echo "$tuple" |cut -d+ -f3)
+            cd "$app_dir"
+            refs="$(git show-ref | awk '{print $2}' | grep -E '^refs/(tags|remotes/origin)/' | grep -Ev '\^\{\}$' |sed -Ee 's#^refs/(tags|remotes/origin)/(.+)$#\2#g' | grep -v "$main_branch"| tr '\n' ' ' | sed -e 's/ $//g')"
+            short_repo_name=$(echo "$repo" | cut -d: -f2)
+            ref_to_checkout=$(ask "Version to use for $short_repo_name ? [$main_branch] : " "$main_branch" "$refs")
+            git checkout "$ref_to_checkout"
+
+        done
+    else
+        log debug "User did NOT asked for automatic clone : $answer"
+        for repo in $missing_repos; do
+            app_dir=$(get_app_dir_from_repo "$repo")
+            echo "git clone $repo $app_dir"
+        done
+        log error "Please run the above git"
+        exit 7;
+    fi
+fi
+
+# Check docker-compose file existance
+missing_file=false
+for compose_file in "${NEEDED_COMPOSE_FILES[@]}"; do
+    log debug "Checking docker-compose config $compose_file"
+    if ! [ -f "$compose_file" ]; then
+        log error "Compose file $compose_file doesn't exists"
+        missing_file=true
+    fi
+done
+if [ "$missing_file" != "false" ]; then
+    log error "Some compose files are missing"
+    exit 4;
+fi
+
+# Generate docker_compose flags
+DOCKER_COMPOSE_FLAGS=()
+for file in "${NEEDED_COMPOSE_FILES[@]}"; do
+    DOCKER_COMPOSE_FLAGS+=("-f")
+    DOCKER_COMPOSE_FLAGS+=("$file")
+done
+
+# Check hosts only for some commands
+if ! { [ "$SKIP_CHECKS" = "1" ] || [ "$IGNORE_HOSTS" = "1" ] ; };  then
+    # Find all hosts required by the http router/loadbalancer
+    if ! hosts_to_check=$(find_traefik_hosts); then
+        log error "Unable to get traefik hosts"
+        exit 5;
+    fi
+
+    # Check that all hosts point to 127.0.0.1
+    log info "host to check $hosts_to_check"
+    missing_hosts=""
+    for host in $hosts_to_check; do
+        host_resolved=$(get_host "$host")
+        if [ "$host_resolved" != "127.0.0.1" ]; then
+            log error "Host $host doesn't point to 127.0.0.1"
+            missing_hosts="$missing_hosts $host"
+        fi
+    done
+    if [ -n "$missing_hosts" ]; then
+        for host in $missing_hosts; do
+            echo "127.0.0.1 $host"
+        done | sort | uniq
+        log error "Please add the hosts above to your /etc/hosts file"
+        exit 6;
+    fi
+fi
+
+# delete arg in order to have a proper launch arguments
+shift
+
+# Special commands
+case $1 in
+    clean)
+        global_file_count=0
+        for repo in "${NEEDED_REPOSITORIES[@]}"; do
+            if echo "$repo" |grep -qE '\.git'; then
+                app_dir=$(get_app_dir_from_repo "$repo")
+                cd "$app_dir";
+                echo ""
+                echo "# $app_dir"
+                echo "#######################################################################"
+                # shellcheck disable=SC2068
+                # We can't double quote array expansion since we add "-e" in front using
+                # bash parameters expansion
+                files="$(do_git clean --dry-run -Xffd ${IDE_FILES[@]/#/-e !} 2>&1 )"
+                repo_file_count=$(echo "$files" | wc -l)
+                echo "$files"
+                global_file_count=$((repo_file_count+global_file_count))
+                cd "$HERE/apps/"
+           fi
+        done
+
+        if
+            [[ -t 0 ]] \
+            && [ "$(ask "Do you really want to ${RED}DELETE${EOC} thoses ${RED}${global_file_count} files${EOC} ? (y/N) :" n y)" = "y" ] \
+            && [ "$(ask "This data is too important for me to allow you to jeopardize it. ${RED}Are you sure you want to do this${EOC} ? (y/N) :" n y)" = "y" ]
+        then
+            for repo in "${NEEDED_REPOSITORIES[@]}"; do
+                if echo "$repo" |grep -qE '\.git'; then
+                    app_dir=$(get_app_dir_from_repo "$repo")
+                    cd "$app_dir";
+                    echo ""
+                    echo "# $app_dir"
+                    echo "#######################################################################"
+                    # shellcheck disable=SC2068
+                    # We can't double quote array expansion since we add "-e" in front using
+                    # bash parameters expansion
+                    do_git clean -Xffd ${IDE_FILES[@]/#/-e !}
+                    cd "$HERE/apps/"
+               fi
+            done
+
+        else
+            log info "Cancelling clean"
+        fi
+
+    ;;
+    git)
+        shift
+        parameters=( "$@" )
+        set +e
+        echo "${NEEDED_REPOSITORIES[@]}"
+        for repo in "${NEEDED_REPOSITORIES[@]}"; do
+            if echo "$repo" |grep -E '\.git'; then
+                app_dir=$(get_app_dir_from_repo "$repo")
+                cd "$app_dir";
+                echo ""
+                echo "# $app_dir"
+                echo "#######################################################################"
+
+                do_git "${parameters[@]}"
+                cd "$HERE/apps/"
+           fi
+        done
+    ;;
+    *)
+        parameters=( "$@" )
+        get_docker_config > "$DOCKER_COMPOSE_CACHE_CONFIG"
+        "$DOCKER_COMPOSE_BIN" -f "$DOCKER_COMPOSE_CACHE_CONFIG" "${parameters[@]}"
+    ;;
+esac
+
+log debug "Script ended"
