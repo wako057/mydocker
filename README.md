@@ -63,3 +63,8 @@ indb-dc <project-name> down
 Stop the stack and remove ALL data (including persistent ones)
 
 indb-dc <project-name> down -v
+    
+# Contributes
+
+Nathan Delhaye https://github.com/theredcat
+Gregory Gerard https://github.com/wako057
