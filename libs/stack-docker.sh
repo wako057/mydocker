@@ -22,6 +22,7 @@ get_docker_config () {
     fi
     echo "$CACHE_DOCKER_CONFIG"
 }
+
 find_traefik_hosts() {
   # Determine the list of host that is handled by traefik
   log debug "Getting host list required by Traefik"
