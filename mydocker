@@ -357,7 +357,7 @@ case $1 in
         shift
         parameters=( "$@" )
         set +e
-        log info "Needed Repo: ${NEEDED_REPOSITORIES[@]}"
+        echo "${NEEDED_REPOSITORIES[@]}"
         for repo in "${NEEDED_REPOSITORIES[@]}"; do
             if echo "$repo" |grep -E '\.git'; then
                 app_dir=$(get_app_dir_from_repo "$repo")
