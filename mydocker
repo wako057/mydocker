@@ -45,6 +45,9 @@ deps () {
     log debug "Building dependancy list for $app"
 
     case $app in
+      mini-api)
+        repository="git@github.com:wako057/mini-api.git"
+      ;;
       rundeck)
         repository="git@github.com:wako057/rundeck.git"
       ;;
